@@ -2,49 +2,55 @@
 const WORD_URL = "https://words.dev-apis.com/word-of-the-day";
 const VALIDATE_URL = "https://words.dev-apis.com/validate-word"
 
+let gameActive = true;
 let keyword = ""; 
 
-let contents = {}; 
+let contents = {};
 
-const parseWord = () => {
-    for (c = 0; c < 5; c++) {
-        for (d = 0; d < Object.keys(contents).length; d++) {
-            if (keyword[c] == Object.keys(contents)[d]) {
-                contents[keyword[c]][0] += 1;
-                contents[keyword[c]].push(c);
-                break;
-            }
-            else {
-                contents[keyword[c]] = [1, c];
-                break;
-            }
-        }
-    }
-}
-parseWord();
-
+// Fetch daily keyword from API
 async function getWord() {
     const promise = await fetch(WORD_URL);
     const processedResponse = await promise.json();
     keyword = processedResponse.word;
 }
 
+getWord();
+
+// Parse keyword into an object with the format {"letter": count, [position(s)]}
+const parseWord = () => {
+    contents = {};
+    for (let i = 0; i < keyword.length; i++) {
+        const letter = keyword[i].toLowerCase();
+        if (contents[letter]) {
+            contents[letter].count++;
+            contents[letter].positions.push(i);
+        }
+        else {
+            contents[letter] = {
+                count: 1,
+                positions: [i]
+            }
+        }
+    }
+}
+
+// Node list of letter divs
 const letters = document.querySelectorAll("div.letter");
 
-let word_index = 1;
-let word = "";
-let arr = [];
-let i = 0;
+let word_index = 1; // Which of the 6 words is the current guess on, from [1 to 6]
+let word = ""; // Word inputted by user
+let i = 0; // Node (letter) index
 
+// Register inputs using keydown event
 const typeLetter = (event) => {
     const value = event.key;
-    if (/^[a-zA-z]$/.test(value)) {
+    if (/^[a-z]$/i.test(value)) {
         for (i = 5*word_index-5; i < 5*(word_index+1)-5; i++) {
-            if (i % 5 == 4) {
+            if (i % 5 === 4) {
                 letters[i].innerHTML = value.toUpperCase();
                 break;
             }
-            if (letters[i].innerHTML.length == 0) {
+            if (letters[i].innerHTML.length === 0) {
                 letters[i].innerHTML = value.toUpperCase();
                 break;
             }
@@ -52,6 +58,7 @@ const typeLetter = (event) => {
     }
     else if (value === "Enter") {
         if (i % 5 == 4){
+            word = "";
             for (i = 5*word_index-5; i < 5*(word_index+1)-5; i++) {
                 word += letters[i].innerHTML;
             }
@@ -66,80 +73,116 @@ const typeLetter = (event) => {
     }
 }
 
-addEventListener("keydown", (event) => {typeLetter(event);});
-
-const fullWord = (word) => {
-    if (i % 4 == 0) {
-        let validWord = validate(word);
-        if (validWord) {
-            if (word == keyword){
-                //alert "you win"
-                //make row green
-                //stop all JS
-
-                for (a = 5*word_index-5; a < 5*(word_index+1)-5; a++) {
-                    letters[a].style.background = "green cover"
-                }
-            }
-            else {
-                /*
-                for (a = 5*word_index-5; a < 5*(word_index+1)-5; a++) {
-                    for (b = 0; b < 5; b++) {
-                        if (letters[a].innerHTML == keyword[b].toUpperCase) {
-                            if (a == b) {
-                                // make node green
-                            }
-                            else {
-                                // make node yellow
-                            }
-                        }
-                    }
-                }*/
-                const keys = Object.keys[contents];
-                for (a = 5*word_index-5; a < 5*(word_index+1)-5; a++) {
-                    for (b = 0; b < keys.length; b++){
-                        if (letters[a].innerHTML.toLowerCase() == keys[b]) {
-                            let key = keys[b];
-                            key.value[0] -= 1;
-                            for (k = 1; k < key.value.length; k++) {
-                                if (a % 5 == key.value[k]) {
-                                    // make a green
-                                    letters[a].style.background = "green cover"
-                                    key.value.splice(k, 1);
-                                    break;
-                                }
-                                else {
-                                    // make yellow;
-                                    letters[a].style.background = "yellow cover"
-                                    break;
-                                }
-                            }
-                            // make grey
-                            letters[a].style.background = "grey cover"
-                            continue;
-                        }
-                    }
-                }
-                i++;
-                word_index++;
-            }
-        }
-        else {
-            // not a word animation
-        }
+// Event listener for keydown
+addEventListener("keydown", (event) => {
+    if (gameActive) {
+        typeLetter(event);
     }
-}
+});
 
-const del = () => {
-    if (i % 5 == 0) {
-        letters[i].innerHTML ="";
+// Word verification logic. Green if exact match, yellow if correct letter but wrong location, grey otherwise, and
+// then increment word index. If invalid word inputted (not a word), flash row with a red animation, and word index
+// remains the same.
+const fullWord = async (word) => {
+    parseWord();
+
+    if (word.length != 5) {
         return;
     }
-    
-    letters[i].innerHTML = "";
-    i--;
+
+    const isValid = await validate(word);
+
+    if (!isValid) {
+        // Select all letters in the current row
+        const currentRowLetters = Array.from(letters).slice((word_index - 1) * 5, word_index * 5);
+
+        // Function to apply and remove the animation
+        const flashAnimation = () => {
+            currentRowLetters.forEach(letter => {
+                letter.classList.add('incorrect');
+                void letter.offsetWidth;
+            });
+
+            setTimeout(() => {
+                currentRowLetters.forEach(letter => {
+                    letter.classList.remove('incorrect');
+                });
+            }, 1500); // 1500ms = 1.5s, the duration of our animation
+        };
+
+        flashAnimation();
+
+        return;
+    }
+
+
+    const wordArray = word.toLowerCase().split('');
+    const tempContents = JSON.parse(JSON.stringify(contents));
+
+    // First pass: Mark perfect matches (green)
+    for (let i = 0; i < 5; i++) {
+        const letter = wordArray[i];
+        const letterInfo = tempContents[letter];
+        const currentLetter = letters[5 * word_index - 5 + i];
+
+        if (letter === keyword[i].toLowerCase()) {
+            currentLetter.classList.add('green');
+            if (letterInfo) {
+                letterInfo.count--;
+            }
+        }
+    }
+
+    // Second pass: Mark yellow or grey
+    for (let i = 0; i < 5; i++) {
+        const letter = wordArray[i];
+        const letterInfo = tempContents[letter];
+        const currentLetter = letters[5 * word_index - 5 + i];
+
+        if (!currentLetter.classList.contains('green')) {
+            if (letterInfo && letterInfo.count > 0) {
+                currentLetter.classList.add('yellow');
+                letterInfo.count--;
+            } else {
+                currentLetter.classList.add('grey');
+            }
+        }
+    }
+
+    // Win/Lose logic
+    if (word.toLowerCase() === keyword.toLowerCase()) {
+        alert("You win!");
+        gameActive = false;
+    }
+    else if (word_index >= 6) {
+        alert("Game over! The word was: " + keyword);
+    }
+    else {
+        word_index++;
+    }
+
 }
 
+
+// Delete a letter
+const del = () => {
+
+    const currentWordStart = 5 * (word_index - 1);
+    let lastFilledIndex = currentWordStart + 4;
+
+
+    while (lastFilledIndex >= currentWordStart && letters[lastFilledIndex].innerHTML === "") {
+        lastFilledIndex--;
+    }
+
+
+    if (lastFilledIndex >= currentWordStart) {
+        letters[lastFilledIndex].innerHTML = "";
+        word = word.slice(0, -1);
+    }
+}
+
+// Posts inputted word to api to check if valid
 async function validate(toValidate) {
 
     const promise = await fetch(VALIDATE_URL, {
